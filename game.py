@@ -1,4 +1,5 @@
 import random
+
 import pygame
 
 WIDTH, HEIGHT = 480, 640
@@ -10,20 +11,72 @@ PLATFORM_H = 14
 COIN_R = 7
 LIVES_START = 3
 
+# ---------------------------------------------------------------------------
+# Task 4 state: sparkle particles + combo counter (module level because
+# on_coin_collected() only receives (coin, score), not the Game object).
+# ---------------------------------------------------------------------------
+particles = []   # each: [x, y, vx, vy, life]  (x, y in world coordinates)
+combo = 0        # coins collected in a row without losing a life
+
 
 def platform_color(index, total):
-    """Return an (r, g, b) colour override for the platform at this index (0 is the ground), or None for the default green."""
-    pass
+    """Task 2: gradient from green (ground) to violet (top)."""
+    t = index / total if total else 0
+    t = max(0.0, min(1.0, t))
+    start, end = (100, 180, 100), (170, 90, 220)
+    return tuple(int(s + (e - s) * t) for s, e in zip(start, end))
 
 
 def moving_platform_speed(index, total):
-    """Return a horizontal oscillation speed in pixels/frame for the platform at this index, or None/0 to keep it static."""
-    pass
+    """Task 3: every third platform moves; higher ones move faster.
+
+    Speeds are whole pixels/frame because Rect.x is an integer
+    (fractional speeds would be truncated and behave unevenly).
+    """
+    if index % 3 != 0:
+        return None
+    if index < total / 3:
+        return 1
+    if index < 2 * total / 3:
+        return 2
+    return 3
 
 
 def on_coin_collected(coin, score):
-    """Called the instant the player collects a coin, after its value has been added to the score. Add a sound or sparkle here."""
-    pass
+    """Task 4: spawn a sparkle burst at the coin and bump the combo counter."""
+    global combo
+    combo += 1
+    for _ in range(14):
+        angle = random.uniform(0, 6.2832)
+        speed = random.uniform(1.0, 3.5)
+        vec = pygame.Vector2(speed, 0).rotate_rad(angle)
+        particles.append([coin.pos.x, coin.pos.y, vec.x, vec.y, random.randint(20, 35)])
+
+
+def reset_combo():
+    global combo
+    combo = 0
+
+
+def reset_effects():
+    particles.clear()
+    reset_combo()
+
+
+def update_effects():
+    for p in particles:
+        p[0] += p[2]
+        p[1] += p[3]
+        p[3] += 0.08      # slight gravity
+        p[4] -= 1
+    particles[:] = [p for p in particles if p[4] > 0]
+
+
+def draw_effects(screen, cam_y):
+    for x, y, _vx, _vy, life in particles:
+        shade = min(255, 80 + life * 6)
+        radius = 1 + life // 12
+        pygame.draw.circle(screen, (255, shade, 80), (int(x), int(y - cam_y)), radius)
 
 
 class Platform:
@@ -134,6 +187,7 @@ class Game:
         self.last_safe = pygame.Vector2(self.player.rect.x, self.player.rect.y)
         self.state = "play"
         self.top_y = self.platforms[-1].rect.y
+        reset_effects()
 
     def score(self):
         return int(self.height) + self.coin_score
@@ -147,32 +201,29 @@ class Game:
             if dx and self.player.standing_on is plat:
                 self.player.rect.x += dx
         self.player.update(self.platforms)
-
+        update_effects()
         target_cam = self.player.rect.centery - HEIGHT // 2
         if target_cam < self.cam_y:
             self.cam_y = target_cam
-
+        # Task 1 fix: height is the BEST height reached, so it only ever goes up.
         current_height = max(0, (HEIGHT - 40 - self.player.rect.y) // 10)
-        self.height = current_height
-
+        self.height = max(self.height, current_height)
         if self.player.on_ground:
             self.last_safe = pygame.Vector2(self.player.rect.x, self.player.rect.y)
-
         for coin in self.coins:
             if not coin.taken and self.player.rect.collidepoint(coin.pos):
                 coin.taken = True
                 self.coin_score += 50
                 on_coin_collected(coin, self.score())
         self.coins = [c for c in self.coins if not c.taken]
-
         if self.player.rect.top - self.cam_y > HEIGHT + 50:
             self.lives -= 1
+            reset_combo()  # falling breaks the combo
             if self.lives <= 0:
                 self.state = "lose"
             else:
                 self.player.rect.x, self.player.rect.y = int(self.last_safe.x), int(self.last_safe.y)
                 self.player.vel_y = 0
-
         if self.player.rect.y <= self.top_y:
             self.state = "win"
 
@@ -183,10 +234,12 @@ class Game:
         for coin in self.coins:
             coin.draw(screen, self.cam_y)
         self.player.draw(screen, self.cam_y)
-
-        hud = self.font.render(f"Height: {self.height}m  Coins: {self.coin_score // 50}  Lives: {self.lives}", True, (200, 200, 200))
+        draw_effects(screen, self.cam_y)
+        hud = self.font.render(f"Height: {self.height}m Coins: {self.coin_score // 50} Lives: {self.lives}", True, (200, 200, 200))
         screen.blit(hud, (10, 10))
-
+        if combo >= 2:
+            combo_text = self.font.render(f"Combo x{combo}!", True, (255, 200, 80))
+            screen.blit(combo_text, (10, 36))
         if self.state != "play":
             text = "YOU REACHED THE TOP!" if self.state == "win" else "YOU FELL!"
             color = (80, 220, 80) if self.state == "win" else (220, 60, 60)
